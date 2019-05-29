@@ -2,7 +2,7 @@ module Hedgehog.WebDriver
 ( WebContext(..)
 , Millis(..)
 , MonadWebTest
-, withSession
+, withBrowser
 )
 where
 
