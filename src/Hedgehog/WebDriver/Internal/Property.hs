@@ -5,10 +5,10 @@ import Control.Monad.Trans        (lift)
 import Hedgehog.Internal.Gen      (GenT)
 import Hedgehog.Internal.Property
 
-propFinally :: IO () -> Property -> Property
-propFinally f prop = do
+propFinally :: Property -> IO () -> Property
+propFinally prop f = do
   let test = propertyTest prop
-  prop { propertyTest = finally f test }
+  prop { propertyTest = test `finally` f }
 
 -- | Resource bracket for 'PropertyT'
 bracket :: Monad m
@@ -18,14 +18,14 @@ bracket :: Monad m
   -> PropertyT m b
 bracket create destroy f = do
   resource <- liftProp create
-  finally (destroy resource) (f resource)
+  finally (f resource) (destroy resource)
 
 -- | Run an action when the property is finished, either successfully or not
 finally :: Monad m
-  => m ()           -- ^ Action to execute when property has finished (or failed)
+  => PropertyT m a
+  -> m ()           -- ^ Action to execute when property has finished (or failed)
   -> PropertyT m a
-  -> PropertyT m a
-finally f prop = do
+finally prop f = do
   let res = runTestT $ unPropertyT prop
   PropertyT $ mkTestT $ res >>= (\a -> lift f >> pure a)
 
