@@ -5,6 +5,7 @@ module Hedgehog.WebDriver.Commands
 , awaitElem
 , awaitDisplayed, awaitNotDisplayed
 , awaitEnabled, awaitDisabled
+, awaitDisappear
 
 -- ** Session operations
 , cleanupSession
@@ -15,7 +16,7 @@ module Hedgehog.WebDriver.Commands
 )
 where
 
-import Control.Monad.Catch (MonadCatch)
+import Control.Monad.Catch (MonadCatch, throwM, catch)
 import Control.Monad (void)
 
 import Hedgehog (MonadTest, evalM)
@@ -24,7 +25,7 @@ import Hedgehog.WebDriver.WebContext (MonadWebTest, Millis (..), WebContext (..)
 import Data.Text (Text)
 import Data.Bool (bool)
 
-import           Test.WebDriver               (Element, Selector (..))
+import           Test.WebDriver               (Element, Selector (..), FailedCommand(..), FailedCommandType(..))
 import qualified Test.WebDriver               as Web
 import           Test.WebDriver.Class         (WebDriver)
 import qualified Test.WebDriver.Commands      as Web
@@ -68,6 +69,16 @@ awaitDisabled :: (MonadWebTest m, HasCallStack) => Element -> m ()
 awaitDisabled elem =
   let errorMsg = "Element is not displayed"
   in withFrozenCallStack $ awaitFor (pure . bool (Left errorMsg) (Right ())) (not <$> Web.isEnabled elem)
+
+awaitDisappear :: (MonadWebTest m, HasCallStack) => Element -> m ()
+awaitDisappear elem =
+  withFrozenCallStack $ await (touchElem `catch` handler)
+  where
+    errorMsg = "Element is expected to disappear from DOM, but it is still there"
+    touchElem = Web.isDisplayed elem >> Wait.unexpected errorMsg
+
+    handler (FailedCommand StaleElementReference _) = pure ()
+    handler other                                   = throwM other
 
 ------------------------------- LOWER LEVEL PRIMITIVES ------------------------
 
