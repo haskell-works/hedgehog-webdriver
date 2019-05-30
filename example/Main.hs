@@ -29,7 +29,7 @@ searchHedgehog :: Property
 searchHedgehog = withTests 5 . property $
   withBrowser chromeConfig $ do
     openPage "https://www.github.com/"
-    input <- evalM $ awaitElem (ByName "q")
+    input <- awaitElem (ByName "q")
     sendKeys "Haskell Hedgehog" input
     sendKeys Keys.enter input
 
