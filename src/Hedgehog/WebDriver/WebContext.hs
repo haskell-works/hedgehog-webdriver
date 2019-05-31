@@ -38,7 +38,7 @@ import qualified Test.WebDriver.Session   as Web
 import Control.Exception.Lifted (throwIO)
 import Test.WebDriver.Internal
 
-type MonadWebTest m = (MonadTest m, WebDriver m, WebContextState m, MonadCatch m)
+type MonadWebTest m = (MonadIO m, MonadTest m, WebDriver m, WebContextState m, MonadCatch m)
 
 newtype Millis = Millis { unMillis :: Int } deriving (Show, Eq, Ord)
 

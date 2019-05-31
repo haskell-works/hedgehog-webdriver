@@ -7,20 +7,20 @@ module Hedgehog.WebDriver
 )
 where
 
-import Hedgehog.WebDriver.WebContext
 import Hedgehog.WebDriver.Internal.Property (finally)
+import Hedgehog.WebDriver.WebContext
 
-import Test.WebDriver               (WDConfig, closeSession, runWD)
-import Control.Concurrent.STM       (readTVarIO, newTVarIO, TVar)
-import Hedgehog.Internal.Property   (PropertyT)
-import Control.Monad.Reader         (runReaderT)
-import Hedgehog                     (evalM, test)
+import Control.Concurrent.STM     (TVar, newTVarIO, readTVarIO)
+import Control.Monad.Reader       (runReaderT)
+import Hedgehog                   (evalM, test)
+import Hedgehog.Internal.Property (PropertyT)
+import Test.WebDriver             (WDConfig, closeSession, runWD)
 
+import Control.Monad.IO.Class   (MonadIO, liftIO)
 import Hedgehog.Internal.Source (HasCallStack (..), withFrozenCallStack)
-import Test.WebDriver.Config (mkSession, mkCaps)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Test.WebDriver.Config    (mkCaps, mkSession)
 
-import qualified Test.WebDriver.Commands      as Web
+import qualified Test.WebDriver.Commands as Web
 
 -- | Runs a new browser session in a property
 withBrowser :: HasCallStack => WDConfig -> WebTest a -> PropertyT IO a

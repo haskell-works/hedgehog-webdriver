@@ -20,6 +20,7 @@ library
     Hedgehog.WebDriver
     Hedgehog.WebDriver.Commands
     Hedgehog.WebDriver.Internal.Property
+    Hedgehog.WebDriver.Internal.Retry
     Hedgehog.WebDriver.WebContext
   -- other-modules:
   -- other-extensions:
@@ -32,6 +33,7 @@ library
     , monad-control
     , lifted-base
     , mtl
+    , retry
     , stm
     , text
     , transformers-base

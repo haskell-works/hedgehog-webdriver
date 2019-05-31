@@ -3,6 +3,7 @@ module Hedgehog.WebDriver.Commands
 ( MonadWebTest
 -- ** Awaiting for elements
 , awaitElem
+, awaitElemText
 , awaitDisplayed, awaitNotDisplayed
 , awaitEnabled, awaitDisabled
 , awaitDisappear
@@ -16,21 +17,23 @@ module Hedgehog.WebDriver.Commands
 )
 where
 
-import Control.Monad.Catch (MonadCatch, throwM, catch)
-import Control.Monad (void)
+import Control.Monad       (void)
+import Control.Monad.Catch (MonadCatch, catch, throwM)
 
-import Hedgehog (MonadTest, evalM)
-import Hedgehog.Internal.Source      (HasCallStack (..), withFrozenCallStack)
-import Hedgehog.WebDriver.WebContext (MonadWebTest, Millis (..), WebContext (..), WebContextState (..))
-import Data.Text (Text)
-import Data.Bool (bool)
+import Data.Bool                         (bool)
+import Data.Either                       (isRight)
+import Data.Text                         (Text)
+import Hedgehog                          (MonadTest, diff, evalEither, evalM)
+import Hedgehog.Internal.Source          (HasCallStack (..), withFrozenCallStack)
+import Hedgehog.WebDriver.Internal.Retry (retrying, retryingMap)
+import Hedgehog.WebDriver.WebContext     (Millis (..), MonadWebTest, WebContext (..), WebContextState (..))
 
-import           Test.WebDriver               (Element, Selector (..), FailedCommand(..), FailedCommandType(..))
+import qualified Data.Text                    as Text
+import           Test.WebDriver               (Element, FailedCommand (..), FailedCommandType (..), Selector (..))
 import qualified Test.WebDriver               as Web
 import           Test.WebDriver.Class         (WebDriver)
 import qualified Test.WebDriver.Commands      as Web
 import qualified Test.WebDriver.Commands.Wait as Wait
-import qualified Data.Text as Text
 
 -- | Performs a session cleanup by deleting everything from WebStorage and
 -- deleting all the visible cookies.
@@ -80,6 +83,9 @@ awaitDisappear elem =
     handler (FailedCommand StaleElementReference _) = pure ()
     handler other                                   = throwM other
 
+awaitElemText :: (MonadWebTest m, HasCallStack) => Element -> (Text -> Bool) -> m Text
+awaitElemText elem f = withFrozenCallStack $ evalM $
+  retrying (pure . f) (Web.getText elem) >>= evalEither
 ------------------------------- LOWER LEVEL PRIMITIVES ------------------------
 
 -- | Awaits for the specified action to succeed.
@@ -91,12 +97,14 @@ await = withFrozenCallStack $ awaitFor (pure . Right)
 -- | Executes an action and awaits for the result that satisfies the predicate.
 -- The predicate is expected to either return an error message, or a potentially modified result.
 awaitFor :: (MonadWebTest m, HasCallStack) => (a -> m (Either Text b)) -> m a -> m b
-awaitFor f ma = do
-  ctx <- getWebContext
-  let seconds = (fromIntegral . unMillis . timeout) ctx / 1000
-  withFrozenCallStack $ evalM $ Wait.waitUntil seconds $ do
-    val <- ma
-    res <- f val
-    case res of
-      Left err -> Wait.unexpected (Text.unpack err)
-      Right val' -> pure val'
+awaitFor f ma = withFrozenCallStack $ evalM $ do
+  vals <- retryingMap (fmap (either (const Nothing) Just) . f) ma
+  case vals of
+    Right b -> pure b
+    Left a  -> f a >>= evalEither
+
+
+awaitDiff :: (Show a, Eq a, MonadWebTest m, HasCallStack) => m a -> (a -> a -> Bool) -> a -> m ()
+awaitDiff ma f a = withFrozenCallStack $ do
+  res <- retrying (\x -> pure (f x a)) ma
+  diff (either id id res) f a
