@@ -2,32 +2,41 @@
 module Hedgehog.WebDriver.Commands
 ( MonadWebTest
 -- ** Awaiting for elements
-, awaitElem
-, awaitElemText
+, awaitElem, awaitElemWithin, awaitElemWithin'
+, awaitText
 , awaitDisplayed, awaitNotDisplayed
 , awaitEnabled, awaitDisabled
-, awaitDisappear
+, awaitMissing
 
 -- ** Session operations
 , cleanupSession
 
 -- ** Lower level primitives
-, await
-, awaitFor
+, MonadWebDriver
+, HasElement
+, findAll
 )
 where
 
-import Control.Monad       (void)
-import Control.Monad.Catch (MonadCatch, catch, throwM)
+import Control.Monad          (filterM, void)
+import Control.Monad.Catch    (MonadCatch, catch, throwM)
+import Control.Monad.IO.Class (MonadIO)
+import Data.List.NonEmpty     (NonEmpty, nonEmpty)
 
-import Data.Bool                         (bool)
-import Data.Either                       (isRight)
-import Data.Text                         (Text)
-import Hedgehog                          (MonadTest, diff, evalEither, evalM)
-import Hedgehog.Internal.Source          (HasCallStack (..), withFrozenCallStack)
-import Hedgehog.WebDriver.Internal.Retry (retrying, retryingMap)
-import Hedgehog.WebDriver.WebContext     (Millis (..), MonadWebTest, WebContext (..), WebContextState (..))
+import Data.Bifunctor                       (bimap)
+import Data.Bool                            (bool)
+import Data.Either                          (isRight)
+import Data.Functor                         ((<&>))
+import Data.Maybe                           (fromMaybe, listToMaybe)
+import Data.Text                            (Text)
+import Hedgehog                             (MonadTest, diff, evalEither, evalM)
+import Hedgehog.Internal.Show               (showPretty)
+import Hedgehog.Internal.Source             (HasCallStack (..), withFrozenCallStack)
+import Hedgehog.WebDriver.Internal.Commands
+import Hedgehog.WebDriver.Internal.Retry    (retrying, retryingMap)
+import Hedgehog.WebDriver.WebContext        (Millis (..), MonadWebDriver, MonadWebTest, WebContext (..), WebContextState (..))
 
+import qualified Data.List.NonEmpty           as Nel
 import qualified Data.Text                    as Text
 import           Test.WebDriver               (Element, FailedCommand (..), FailedCommandType (..), Selector (..))
 import qualified Test.WebDriver               as Web
@@ -46,65 +55,52 @@ cleanupSession = do
 -- | The same as 'Test.WebDriver.findElem', but awaits for the element
 -- to appear on the web page, giving time to the page
 -- and to the scripts to run.
-awaitElem :: (MonadWebTest m, HasCallStack) => Selector -> m Element
-awaitElem sel = withFrozenCallStack $ await (Web.findElem sel)
+awaitElem :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
+awaitElem a = withFrozenCallStack $ awaitElemWithin' Nothing a (pure . const True)
 
--- | Awaits for the element to be visible of the web page
-awaitDisplayed :: (MonadWebTest m, HasCallStack) => Element -> m ()
-awaitDisplayed elem =
-  let errorMsg = "Element is not displayed"
-  in withFrozenCallStack $ awaitFor (pure . bool (Left errorMsg) (Right ())) (Web.isDisplayed elem)
+awaitElemWithin :: (HasElement a, MonadWebTest m, HasCallStack) => Maybe Element -> a -> m Element
+awaitElemWithin root a = withFrozenCallStack $ awaitElemWithin' root a (pure . const True)
 
--- | Awaits for the element to be not visible on the web page
-awaitNotDisplayed :: (MonadWebTest m, HasCallStack) => Element -> m ()
-awaitNotDisplayed elem =
-  let errorMsg = "Element es expected to be hidden, but it is still visible"
-  in withFrozenCallStack $ awaitFor (pure . bool (Left errorMsg) (Right ())) (not <$> Web.isDisplayed elem)
+awaitElemWithin' :: (HasElement a, MonadWebTest m, HasCallStack)
+  => Maybe Element
+  -> a
+  -> (Element -> m Bool)
+  -> m Element
+awaitElemWithin' = withFrozenCallStack $ awaitElementWithErr Nothing
+
+-- | Awaits for an element that is visible on the page
+awaitDisplayed :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
+awaitDisplayed a = withFrozenCallStack $
+  awaitElementWithErr (Just "displayed") Nothing a Web.isDisplayed
+
+awaitNotDisplayed :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
+awaitNotDisplayed a = withFrozenCallStack $
+  awaitElementWithErr (Just "not displayed") Nothing a (fmap not . Web.isDisplayed)
 
 -- | Awaits for the element to be enabled
-awaitEnabled :: (MonadWebTest m, HasCallStack) => Element -> m ()
-awaitEnabled elem =
-  let errorMsg = "Element is not displayed"
-  in withFrozenCallStack $ awaitFor (pure . bool (Left errorMsg) (Right ())) (Web.isEnabled elem)
+awaitEnabled :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
+awaitEnabled a = withFrozenCallStack $
+  awaitElementWithErr (Just "enabled") Nothing a Web.isEnabled
 
 -- | Awaits for the element to be disabled
-awaitDisabled :: (MonadWebTest m, HasCallStack) => Element -> m ()
-awaitDisabled elem =
-  let errorMsg = "Element is not displayed"
-  in withFrozenCallStack $ awaitFor (pure . bool (Left errorMsg) (Right ())) (not <$> Web.isEnabled elem)
+awaitDisabled :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
+awaitDisabled a = withFrozenCallStack $
+  awaitElementWithErr (Just "disabled") Nothing a (fmap not . Web.isEnabled)
 
-awaitDisappear :: (MonadWebTest m, HasCallStack) => Element -> m ()
-awaitDisappear elem =
-  withFrozenCallStack $ await (touchElem `catch` handler)
+awaitMissing :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m ()
+awaitMissing a = withFrozenCallStack $ evalM $
+  retrying (pure . const True) (touchElem `catch` handler)
+    <&> bimap (const errorMsg) id
+    >>= evalEither
   where
     errorMsg = "Element is expected to disappear from DOM, but it is still there"
-    touchElem = Web.isDisplayed elem >> Wait.unexpected errorMsg
+    touchElem = asElement a >>= Web.isDisplayed >> Wait.unexpected errorMsg
 
     handler (FailedCommand StaleElementReference _) = pure ()
+    handler (FailedCommand NoSuchElement _)         = pure ()
     handler other                                   = throwM other
 
-awaitElemText :: (MonadWebTest m, HasCallStack) => Element -> (Text -> Bool) -> m Text
-awaitElemText elem f = withFrozenCallStack $ evalM $
-  retrying (pure . f) (Web.getText elem) >>= evalEither
-------------------------------- LOWER LEVEL PRIMITIVES ------------------------
-
--- | Awaits for the specified action to succeed.
---
--- It is intended to be used with WebDriver commands.
-await :: (MonadWebTest m, HasCallStack) => m a -> m a
-await = withFrozenCallStack $ awaitFor (pure . Right)
-
--- | Executes an action and awaits for the result that satisfies the predicate.
--- The predicate is expected to either return an error message, or a potentially modified result.
-awaitFor :: (MonadWebTest m, HasCallStack) => (a -> m (Either Text b)) -> m a -> m b
-awaitFor f ma = withFrozenCallStack $ evalM $ do
-  vals <- retryingMap (fmap (either (const Nothing) Just) . f) ma
-  case vals of
-    Right b -> pure b
-    Left a  -> f a >>= evalEither
-
-
-awaitDiff :: (Show a, Eq a, MonadWebTest m, HasCallStack) => m a -> (a -> a -> Bool) -> a -> m ()
-awaitDiff ma f a = withFrozenCallStack $ do
-  res <- retrying (\x -> pure (f x a)) ma
-  diff (either id id res) f a
+-- | Gets element's text when it satisfies the predicate
+awaitText :: (HasElement a, MonadWebTest m, HasCallStack) => a -> (Text -> Bool) -> m Text
+awaitText a f = withFrozenCallStack $ evalM $
+  awaitElementWithErr (Just "having a suitable text") Nothing a (fmap f . Web.getText) >>= Web.getText

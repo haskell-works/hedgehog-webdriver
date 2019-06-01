@@ -21,6 +21,7 @@ library
     Hedgehog.WebDriver.Commands
     Hedgehog.WebDriver.Internal.Property
     Hedgehog.WebDriver.Internal.Retry
+    Hedgehog.WebDriver.Internal.Commands
     Hedgehog.WebDriver.WebContext
   -- other-modules:
   -- other-extensions:
