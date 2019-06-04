@@ -7,6 +7,7 @@ import Data.Functor                      ((<&>))
 import Data.List.NonEmpty                (NonEmpty, nonEmpty)
 import Data.Maybe                        (fromMaybe)
 import Hedgehog                          (evalEither, evalM)
+import Hedgehog.Internal.Property        (failWith)
 import Hedgehog.Internal.Show            (showPretty)
 import Hedgehog.Internal.Source          (HasCallStack (..), withFrozenCallStack)
 import Hedgehog.WebDriver.Internal.Retry (retrying, retryingMap)
@@ -16,13 +17,21 @@ import Test.WebDriver                    (Element, FailedCommand (..), FailedCom
 import qualified Data.List.NonEmpty as Nel
 import qualified Test.WebDriver     as Web
 
+-- | 'HasElement' unifies operations on 'Selector' and 'Element'
 class HasElement a where
+  -- | Convert a value into an element
   asElement :: MonadWebDriver m => a -> m Element
+
+  -- | Get all elements corresponding to a given value.
+  -- For 'Selector' there can be many, for an 'Element' there will only be one.
   getElements :: MonadWebDriver m
     => a
     -> Maybe Element
     -> (Element -> m Bool)
     -> m (Either [Element] (NonEmpty Element))
+
+  -- | Determines value's string representation.
+  -- The intent of this function is to be used in an error / test failure messages.
   toString :: a -> String
 
 instance HasElement Element where
@@ -35,8 +44,12 @@ instance HasElement Selector where
   getElements = findAll
   toString = showPretty
 
--- | Get all teh element for a given selector which satisfy the predicate.
+-- | Find all elemens for a given selector which satisfy the predicate.
 -- The search will be retried until at least one element is found or a timeot is reached.
+--
+-- When 'findAll' is unable to get a non empty list of elements
+-- that satisfy the predicate, it returns what it was able to find
+-- using the 'Left' constructor.
 findAll :: MonadWebDriver m
   => Selector                                 -- ^ Selector
   -> Maybe Element                            -- ^ Search context, an element to search within
@@ -54,14 +67,16 @@ awaitElementWithErr :: (HasElement a, MonadWebTest m, HasCallStack)
   -> a                    -- ^ What to look for (selector or element)
   -> (Element -> m Bool)  -- ^ A predicate to verify if the search was successfil
   -> m Element
-awaitElementWithErr err root a f = withFrozenCallStack $ evalM $
-  getElements a root f
-    <&> bimap errorMsg Nel.head
-    >>= evalEither
-  where
-    errorMsg as = unlines
-      [ "For a input: " <> toString a
-      , "Found " <> showPretty (length as) <> " elements"
-      , "And none of them was " <> fromMaybe "satisfying a given predicate" err
-      ]
-
+awaitElementWithErr err root a f = withFrozenCallStack $ evalM $ do
+  elems <- getElements a root f
+  case elems of
+    Right vals -> pure (Nel.head vals)
+    Left wrong ->
+      failWith Nothing $ unlines $
+        [ "Failed"
+        , "━━ expected ━━"
+        , toString a
+        , "━━ actual ━━"
+        , showPretty (length wrong) <> " elements"
+        , "And none of them was " <> fromMaybe "satisfying a given predicate" err
+        ]

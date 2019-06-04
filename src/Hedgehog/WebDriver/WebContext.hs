@@ -64,10 +64,10 @@ instance Web.WDSessionState WebTest where
 instance WebDriver WebTest where
   doCommand method path args =
     mkRequest method path args
-    >>= sendHTTPRequest
-    >>= either throwIO return
-    >>= getJSONResult
-    >>= either throwIO return
+      >>= sendHTTPRequest
+      >>= either throwIO return
+      >>= getJSONResult
+      >>= either throwIO return
 
 class WebContextState m where
   getWebContext :: m WebContext

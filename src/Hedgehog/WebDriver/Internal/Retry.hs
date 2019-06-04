@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-
 -- | This module provides machinery for accessing web elements "reliably".
 --
 -- It has similar functionality to what 'Test.WebDriver.Commands.Wait'
@@ -59,6 +57,5 @@ retryingMap' (Millis ms) f ma = do
 
   where
     handler err@(FailedCommand _ _) = pure (Left err)
-    check a =
-      either (const $ pure True) (fmap isNothing <$> f) a
+    check = either (const $ pure True) (fmap isNothing <$> f)
 
