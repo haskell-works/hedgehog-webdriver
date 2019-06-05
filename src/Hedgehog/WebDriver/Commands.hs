@@ -19,6 +19,7 @@ module Hedgehog.WebDriver.Commands
 -- | These functions are not intended for causal use, however can play nice
 -- as a compromise between complexity and good failure messages.
 , await
+, awaitUntil
 )
 where
 
@@ -57,6 +58,13 @@ import qualified Test.WebDriver.Commands.Wait as Wait
   case res of
     Right val -> pure ()
     Left val  -> val === txt
+
+-- (/====) :: (HasElement a, MonadWebTest m, HasCallStack) => a -> Text -> m ()
+-- (/====) a txt = withFrozenCallStack $ evalM $ do
+--   res <- retrying (pure . (/= txt)) (asElement a >>= Web.getText)
+--   case res of
+--     Right val -> pure ()
+--     Left val  -> val /=== txt
 
 (===~) :: (HasElement a, MonadWebTest m, HasCallStack) => a -> (Text -> Bool) -> m ()
 (===~) a f = withFrozenCallStack $ void $ awaitUntil f (asElement a >>= Web.getText)
