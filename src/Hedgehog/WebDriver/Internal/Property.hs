@@ -32,4 +32,3 @@ finally prop f = do
 -- | Helper function: lifting any monadic action to `PropertyT`
 liftProp :: Monad m => m a -> PropertyT m a
 liftProp f = PropertyT $ mkTestT $ lift (f >>= (\a -> pure (Right a, mempty)))
-

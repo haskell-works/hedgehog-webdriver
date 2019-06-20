@@ -20,6 +20,11 @@ module Hedgehog.WebDriver.Commands
 -- as a compromise between complexity and good failure messages.
 , await
 , awaitUntil
+, awaitUntilM
+
+-- ** Lower-level primitives
+, retrying
+, retryingMap
 )
 where
 
@@ -39,6 +44,7 @@ import Hedgehog.Internal.Property           (failWith)
 import Hedgehog.Internal.Show               (showPretty)
 import Hedgehog.Internal.Source             (HasCallStack (..), withFrozenCallStack)
 import Hedgehog.WebDriver.Internal.Commands
+import Hedgehog.WebDriver.Internal.Result   (Result (..), evalResult)
 import Hedgehog.WebDriver.Internal.Retry    (retrying, retryingMap)
 import Hedgehog.WebDriver.WebContext        (Millis (..), MonadWebDriver, MonadWebTest, WebContext (..), WebContextState (..))
 
@@ -52,12 +58,12 @@ import qualified Test.WebDriver.Commands.Wait as Wait
 
 -- | Fails the test if the two arguments provided are not equal.
 -- Retries comparison until it is successful or until the timeout is reached.
-(====) :: (HasElement a, MonadWebTest m, HasCallStack) => a -> Text -> m ()
-(====) a txt = withFrozenCallStack $ evalM $ do
-  res <- retrying (pure . (== txt)) (asElement a >>= Web.getText)
-  case res of
-    Right val -> pure ()
-    Left val  -> val === txt
+-- (====) :: (HasElement a, MonadWebTest m, HasCallStack) => a -> Text -> m ()
+-- (====) a txt = withFrozenCallStack $ evalM $ do
+--   res <- retrying (pure . (== txt)) (asElement a >>= Web.getText)
+--   case res of
+--     Right val -> pure ()
+--     Left val  -> val === txt
 
 -- (/====) :: (HasElement a, MonadWebTest m, HasCallStack) => a -> Text -> m ()
 -- (/====) a txt = withFrozenCallStack $ evalM $ do
@@ -66,43 +72,45 @@ import qualified Test.WebDriver.Commands.Wait as Wait
 --     Right val -> pure ()
 --     Left val  -> val /=== txt
 
-(===~) :: (HasElement a, MonadWebTest m, HasCallStack) => a -> (Text -> Bool) -> m ()
-(===~) a f = withFrozenCallStack $ void $ awaitUntil f (asElement a >>= Web.getText)
+-- (===~) :: (HasElement a, MonadWebTest m, HasCallStack) => a -> (Text -> Bool) -> m ()
+-- (===~) a f = withFrozenCallStack $ void $ awaitUntil f (asElement a >>= Web.getText)
 
 -- | Same as 'Test.WebDriver.findElem', but awaits until the element is found
 -- or a timeout is reached.
 awaitElem :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
-awaitElem a = withFrozenCallStack $ awaitElemWithin' Nothing a (pure . const True)
+awaitElem a = -- withFrozenCallStack $
+  awaitElemWithin' Nothing a (pure . const True)
 
 -- | Same as 'Test.WebDriver.findElemWithin', but awaits until the element is found
 -- or a timeout is reached.
 awaitElemWithin :: (HasElement a, MonadWebTest m, HasCallStack) => Maybe Element -> a -> m Element
-awaitElemWithin root a = withFrozenCallStack $ awaitElemWithin' root a (pure . const True)
+awaitElemWithin root a = -- withFrozenCallStack $
+  awaitElemWithin' root a (pure . const True)
 
 -- | Awaits for an element that is visible on the page
 awaitDisplayed :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
-awaitDisplayed a = withFrozenCallStack $
+awaitDisplayed a = -- withFrozenCallStack $
   awaitElementWithErr (Just "displayed") Nothing a Web.isDisplayed
 
 awaitNotDisplayed :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
-awaitNotDisplayed a = withFrozenCallStack $
+awaitNotDisplayed a = -- withFrozenCallStack $
   awaitElementWithErr (Just "not displayed") Nothing a (fmap not . Web.isDisplayed)
 
 -- | Awaits for the element to be enabled
 awaitEnabled :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
-awaitEnabled a = withFrozenCallStack $
+awaitEnabled a = -- withFrozenCallStack $
   awaitElementWithErr (Just "enabled") Nothing a Web.isEnabled
 
 -- | Awaits for the element to be disabled
 awaitDisabled :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m Element
-awaitDisabled a = withFrozenCallStack $
+awaitDisabled a = -- withFrozenCallStack $
   awaitElementWithErr (Just "disabled") Nothing a (fmap not . Web.isEnabled)
 
 awaitMissing :: (HasElement a, MonadWebTest m, HasCallStack) => a -> m ()
-awaitMissing a = withFrozenCallStack $ evalM $
+awaitMissing a = -- withFrozenCallStack $
   retrying (pure . const True) (touchElem `catch` handler)
     <&> bimap (const errorMsg) id
-    >>= evalEither
+    >>= evalResult
   where
     errorMsg = "Element is expected to disappear from DOM, but it is still there"
     touchElem = asElement a >>= Web.isDisplayed >> Wait.unexpected errorMsg
@@ -113,14 +121,15 @@ awaitMissing a = withFrozenCallStack $ evalM $
 
 -- | Gets element's text when it satisfies the predicate
 awaitText :: (HasElement a, MonadWebTest m, HasCallStack) => a -> (Text -> Bool) -> m Text
-awaitText a f = withFrozenCallStack $ evalM $
+awaitText a f = -- withFrozenCallStack $
   awaitElementWithErr (Just "having a suitable text") Nothing a (fmap f . Web.getText) >>= Web.getText
 
 -- | The same as 'awaitUntil' but without a predicate.
 -- Any result returned by the computation is good, but if the computation
 -- fails then it will be retried until it succeeds or the timeout is reached.
 await :: (Show a, MonadWebTest m) => m a -> m a
-await ma = withFrozenCallStack $ evalM $ retrying (pure . const True) ma >>= evalEither
+await ma = -- withFrozenCallStack $
+  retrying (pure . const True) ma >>= evalResult
 
 -- | A general-purpose awaiting function.
 -- It awaits until the provided action succeeds with the value satisfying
@@ -141,16 +150,12 @@ await ma = withFrozenCallStack $ evalM $ retrying (pure . const True) ma >>= eva
 -- >>> await $ findElem (ByCSS ".list-item:nth-child(2)") >>= click
 
 awaitUntil :: (Show a, MonadWebTest m) => (a -> Bool) -> m a -> m a
-awaitUntil f ma = withFrozenCallStack $ evalM $ do
-  res <- retrying (pure . f) ma
-  case res of
-    Right val -> pure val
-    Left wrong ->
-      failWith Nothing $ unlines
-        [ "Failed (does not satisfy predicate)"
-        , "━━ value ━━"
-        , showPretty wrong
-        ]
+awaitUntil f = --withFrozenCallStack .
+  awaitUntilM (pure . f)
+
+awaitUntilM :: (Show a, MonadWebTest m) => (a -> m Bool) -> m a -> m a
+awaitUntilM f ma = --withFrozenCallStack $
+  retrying f ma >>= evalResult
 
 ------------------------------ INTERNAL HELPERS -------------------------------
 awaitElemWithin' :: (HasElement a, MonadWebTest m, HasCallStack)

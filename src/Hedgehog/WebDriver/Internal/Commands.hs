@@ -1,18 +1,20 @@
 module Hedgehog.WebDriver.Internal.Commands
 where
 
-import Control.Monad                     (filterM)
-import Data.Bifunctor                    (bimap)
-import Data.Functor                      ((<&>))
-import Data.List.NonEmpty                (NonEmpty, nonEmpty)
-import Data.Maybe                        (fromMaybe)
-import Hedgehog                          (evalEither, evalM)
-import Hedgehog.Internal.Property        (failWith)
-import Hedgehog.Internal.Show            (showPretty)
-import Hedgehog.Internal.Source          (HasCallStack (..), withFrozenCallStack)
-import Hedgehog.WebDriver.Internal.Retry (retrying, retryingMap)
-import Hedgehog.WebDriver.WebContext     (MonadWebDriver, MonadWebTest)
-import Test.WebDriver                    (Element, FailedCommand (..), FailedCommandType (..), Selector (..))
+import Control.Exception                  (SomeException (..))
+import Control.Monad                      (filterM)
+import Data.Bifunctor                     (bimap)
+import Data.Functor                       ((<&>))
+import Data.List.NonEmpty                 (NonEmpty, nonEmpty)
+import Data.Maybe                         (fromMaybe)
+import Hedgehog                           (evalEither, evalM)
+import Hedgehog.Internal.Property         (failException, failWith)
+import Hedgehog.Internal.Show             (showPretty)
+import Hedgehog.Internal.Source           (HasCallStack (..), withFrozenCallStack)
+import Hedgehog.WebDriver.Internal.Result (Result (..))
+import Hedgehog.WebDriver.Internal.Retry  (retrying, retryingMap)
+import Hedgehog.WebDriver.WebContext      (MonadWebDriver, MonadWebTest)
+import Test.WebDriver                     (Element, FailedCommand (..), FailedCommandType (..), Selector (..))
 
 import qualified Data.List.NonEmpty as Nel
 import qualified Test.WebDriver     as Web
@@ -28,7 +30,7 @@ class HasElement a where
     => a
     -> Maybe Element
     -> (Element -> m Bool)
-    -> m (Either [Element] (NonEmpty Element))
+    -> m (Result [Element] (NonEmpty Element))
 
   -- | Determines value's string representation.
   -- The intent of this function is to be used in an error / test failure messages.
@@ -54,7 +56,7 @@ findAll :: MonadWebDriver m
   => Selector                                 -- ^ Selector
   -> Maybe Element                            -- ^ Search context, an element to search within
   -> (Element -> m Bool)                      -- ^ Search predicate
-  -> m (Either [Element] (NonEmpty Element))
+  -> m (Result [Element] (NonEmpty Element))
 findAll sel root f =
   let finder = maybe Web.findElems Web.findElemsFrom root
   in retryingMap (fmap nonEmpty . filterM f) (finder sel)
@@ -70,8 +72,9 @@ awaitElementWithErr :: (HasElement a, MonadWebTest m, HasCallStack)
 awaitElementWithErr err root a f = withFrozenCallStack $ evalM $ do
   elems <- getElements a root f
   case elems of
-    Right vals -> pure (Nel.head vals)
-    Left wrong ->
+    Failure err -> failException (SomeException err)
+    Success vals -> pure (Nel.head vals)
+    Wrong wrong ->
       failWith Nothing $ unlines $
         [ "Failed"
         , "━━ expected ━━"
