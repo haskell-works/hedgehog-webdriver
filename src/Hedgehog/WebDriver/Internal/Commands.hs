@@ -69,17 +69,18 @@ awaitElementWithErr :: (HasElement a, MonadWebTest m, HasCallStack)
   -> a                    -- ^ What to look for (selector or element)
   -> (Element -> m Bool)  -- ^ A predicate to verify if the search was successfil
   -> m Element
-awaitElementWithErr err root a f = withFrozenCallStack $ evalM $ do
-  elems <- getElements a root f
-  case elems of
-    Failure err -> failException (SomeException err)
-    Success vals -> pure (Nel.head vals)
-    Wrong wrong ->
-      failWith Nothing $ unlines $
-        [ "Failed"
-        , "━━ expected ━━"
-        , toString a
-        , "━━ actual ━━"
-        , showPretty (length wrong) <> " elements"
-        , "And none of them was " <> fromMaybe "satisfying a given predicate" err
-        ]
+awaitElementWithErr err root a f = -- withFrozenCallStack $
+  do
+    elems <- getElements a root f
+    case elems of
+      Failure err -> failException (SomeException err)
+      Success vals -> pure (Nel.head vals)
+      Wrong wrong ->
+        failWith Nothing $ unlines $
+          [ "Failed"
+          , "━━ expected ━━"
+          , toString a
+          , "━━ actual ━━"
+          , showPretty (length wrong) <> " elements"
+          , "And none of them was " <> fromMaybe "satisfying a given predicate" err
+          ]

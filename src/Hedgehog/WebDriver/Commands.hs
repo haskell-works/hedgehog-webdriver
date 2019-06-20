@@ -163,4 +163,5 @@ awaitElemWithin' :: (HasElement a, MonadWebTest m, HasCallStack)
   -> a
   -> (Element -> m Bool)
   -> m Element
-awaitElemWithin' = withFrozenCallStack $ awaitElementWithErr Nothing
+awaitElemWithin' = -- withFrozenCallStack $
+  awaitElementWithErr Nothing

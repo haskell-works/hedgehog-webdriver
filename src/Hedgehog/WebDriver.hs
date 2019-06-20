@@ -30,7 +30,8 @@ withBrowser conf m = do
   let ctx = WebContext dummy (Millis 10000)
   var <- liftIO (newTVarIO ctx)
 
-  let prop = withFrozenCallStack $ evalM $ runWebTest' var (Web.createSession caps >> m)
+  let prop = -- withFrozenCallStack $ evalM $
+        runWebTest' var (Web.createSession caps >> m)
 
   finally prop $ do
     ctx' <- readTVarIO var
