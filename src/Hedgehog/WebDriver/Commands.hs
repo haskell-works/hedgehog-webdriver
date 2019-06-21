@@ -5,10 +5,12 @@ module Hedgehog.WebDriver.Commands
 , Element
 -- ** Reliable operations on Element
 , awaitElem, awaitElemWithin
+, awaitElemWithin'
 , awaitText
 , awaitDisplayed, awaitNotDisplayed
 , awaitEnabled, awaitDisabled
 , awaitMissing
+, awaitDiff
 
 -- ** Lower level primitives
 , MonadWebDriver
@@ -18,13 +20,15 @@ module Hedgehog.WebDriver.Commands
 -- ** General purpose helpers
 -- | These functions are not intended for causal use, however can play nice
 -- as a compromise between complexity and good failure messages.
-, await
-, awaitUntil
-, awaitUntilM
+, await, awaitMaybe
+, awaitUntil, awaitUntilS
+, awaitUntilM, awaitUntilMS
+, awaitMaybeUntil, awaitMaybeUntilS
+, awaitMaybeUntilM, awaitMaybeUntilMS
 
 -- ** Lower-level primitives
-, retrying
-, retryingMap
+, retrying, retryingS
+, retryingMap, retryingMapS
 )
 where
 
@@ -39,13 +43,13 @@ import Data.Either                          (isRight)
 import Data.Functor                         ((<&>))
 import Data.Maybe                           (fromMaybe, listToMaybe)
 import Data.Text                            (Text)
-import Hedgehog                             (MonadTest, diff, evalEither, evalM, (===))
+import Hedgehog                             (MonadTest, diff, evalEither, evalM, (===), diff)
 import Hedgehog.Internal.Property           (failWith)
 import Hedgehog.Internal.Show               (showPretty)
 import Hedgehog.Internal.Source             (HasCallStack (..), withFrozenCallStack)
 import Hedgehog.WebDriver.Internal.Commands
-import Hedgehog.WebDriver.Internal.Result   (Result (..), evalResult)
-import Hedgehog.WebDriver.Internal.Retry    (retrying, retryingMap)
+import Hedgehog.WebDriver.Internal.Result   (Result (..), evalResult, evalExpectedResult, resultToMaybe)
+import Hedgehog.WebDriver.Internal.Retry    (retrying, retryingS, retryingMap, retryingMapS)
 import Hedgehog.WebDriver.WebContext        (Millis (..), MonadWebDriver, MonadWebTest, WebContext (..), WebContextState (..))
 
 import qualified Data.List.NonEmpty           as Nel
@@ -124,38 +128,49 @@ awaitText :: (HasElement a, MonadWebTest m, HasCallStack) => a -> (Text -> Bool)
 awaitText a f = -- withFrozenCallStack $
   awaitElementWithErr (Just "having a suitable text") Nothing a (fmap f . Web.getText) >>= Web.getText
 
--- | The same as 'awaitUntil' but without a predicate.
--- Any result returned by the computation is good, but if the computation
+-- | Any result returned by the computation is good, but if the computation
 -- fails then it will be retried until it succeeds or the timeout is reached.
 await :: (Show a, MonadWebTest m) => m a -> m a
 await ma = -- withFrozenCallStack $
   retrying (pure . const True) ma >>= evalResult
 
--- | A general-purpose awaiting function.
--- It awaits until the provided action succeeds with the value satisfying
--- the predicate or until timeout is reached.
---
--- This function can help in scenarios when composing reliable actions is still
--- not reliable, probably because of race conditions.
---
--- For example, we can reliably find an element and then act on it, but in
--- dynamic pages an element can disappear, or can be replaced in between these
--- two actions.
---
--- Wrapping the whole computation in 'await' or 'awaitUntil' helps because it
--- retries the whole computation, hence both actions.
-
--- This example shows how it this function can be used:
---
--- >>> await $ findElem (ByCSS ".list-item:nth-child(2)") >>= click
+awaitMaybe :: MonadWebTest m => m a -> m (Maybe a)
+awaitMaybe =
+  fmap resultToMaybe . retrying (pure . const True)
 
 awaitUntil :: (Show a, MonadWebTest m) => (a -> Bool) -> m a -> m a
-awaitUntil f = --withFrozenCallStack .
-  awaitUntilM (pure . f)
+awaitUntil f ma = --withFrozenCallStack .
+  retrying (pure . f) ma >>= evalResult
+
+awaitUntilS :: (Show a, MonadWebTest m) => (s -> a -> (s, Bool)) -> s -> m a -> m a
+awaitUntilS f z ma =
+  retryingS (\s -> pure . f s) z ma >>= evalResult
+
+awaitMaybeUntil :: MonadWebTest m => (a -> Bool) -> m a -> m (Maybe a)
+awaitMaybeUntil f =
+  fmap resultToMaybe . retrying (pure . f)
+
+awaitMaybeUntilS :: MonadWebTest m => (s -> a -> (s, Bool)) -> s -> m a -> m (Maybe a)
+awaitMaybeUntilS f z =
+  fmap resultToMaybe . retryingS (\s -> pure . f s) z
 
 awaitUntilM :: (Show a, MonadWebTest m) => (a -> m Bool) -> m a -> m a
 awaitUntilM f ma = --withFrozenCallStack $
   retrying f ma >>= evalResult
+
+awaitUntilMS :: (Show a, MonadWebTest m) => (s -> a -> m (s, Bool)) -> s -> m a -> m a
+awaitUntilMS f z ma = --withFrozenCallStack $
+  retryingS f z ma >>= evalResult
+
+awaitMaybeUntilM :: MonadWebTest m => (a -> m Bool) -> m a -> m (Maybe a)
+awaitMaybeUntilM f = fmap resultToMaybe . retrying f
+
+awaitMaybeUntilMS :: MonadWebTest m => (s -> a -> m (s, Bool)) -> s -> m a -> m (Maybe a)
+awaitMaybeUntilMS f z = fmap resultToMaybe . retryingS f z
+
+awaitDiff :: (Show a, MonadWebTest m) => a -> (a -> a -> Bool) -> m a -> m a
+awaitDiff a f ma =
+  retrying (pure . f a) ma >>= evalExpectedResult a
 
 ------------------------------ INTERNAL HELPERS -------------------------------
 awaitElemWithin' :: (HasElement a, MonadWebTest m, HasCallStack)

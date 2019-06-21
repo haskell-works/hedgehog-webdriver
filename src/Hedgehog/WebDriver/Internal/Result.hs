@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE DeriveFoldable    #-}
 {-# LANGUAGE DeriveFunctor     #-}
 {-# LANGUAGE DeriveGeneric     #-}
@@ -13,10 +12,12 @@ import Data.Bifoldable
 import Data.Bifunctor
 import Data.Bitraversable
 import GHC.Generics               (Generic)
-import Hedgehog.Internal.Property (MonadTest, failException, failWith)
+import Hedgehog.Internal.Property (MonadTest, failException, failWith, failDiff, diff, failure)
 import Hedgehog.Internal.Show     (showPretty)
 import Hedgehog.Internal.Source   (HasCallStack, withFrozenCallStack)
 import Test.WebDriver             (FailedCommand (..))
+
+import Debug.Trace
 
 data Result e a
   = Success a
@@ -59,8 +60,26 @@ instance Semigroup (Result a b) where
   Failure _ <> b  = b
   _ <> b          = b
 
+resultToMaybe :: Result e a -> Maybe a
+resultToMaybe (Success a) = Just a
+resultToMaybe _           = Nothing
+
 evalResult :: (MonadTest m, Show e, HasCallStack) => Result e a -> m a
 evalResult = \case
-  Wrong x -> withFrozenCallStack $ failWith Nothing $ showPretty x
-  Failure x -> withFrozenCallStack $ failException (SomeException x)
+  Wrong x -> -- withFrozenCallStack $
+    trace ("WRONG RESULT: " <> showPretty x <> "\n\n\n\n") $
+      failWith Nothing $ "WRONG RESULT: " <> showPretty x
+  Failure x -> -- withFrozenCallStack $
+    trace ("EXCEPTION: " <> show x <> "\n\n\n\n") $
+      failException (SomeException x)
+  Success x -> pure x
+
+evalExpectedResult :: (MonadTest m, Show e, Show a, HasCallStack) => a -> Result e a -> m a
+evalExpectedResult a = \case
+  Wrong x -> -- withFrozenCallStack $
+    trace ("WRONG RESULT: " <> showPretty x <> "\n\n\n\n") $
+      failDiff x a >> failure
+  Failure x -> -- withFrozenCallStack $
+    trace ("EXCEPTION: " <> show x <> "\n\n\n\n") $
+      failException (SomeException x)
   Success x -> pure x
