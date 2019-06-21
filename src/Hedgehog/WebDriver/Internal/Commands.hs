@@ -63,7 +63,7 @@ findAll sel root f =
 
 --------------------------------- INTERNAL ? ----------------------------------
 
-awaitElementWithErr :: (HasElement a, MonadWebTest m, HasCallStack)
+awaitElementWithErr :: (HasElement a, MonadWebTest m)
   => Maybe String         -- ^ A part of the error message, describing the predicate
   -> Maybe Element        -- ^ A root element to search within
   -> a                    -- ^ What to look for (selector or element)
