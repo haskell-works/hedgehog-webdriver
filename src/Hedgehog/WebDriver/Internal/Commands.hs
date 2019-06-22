@@ -69,7 +69,7 @@ awaitElementWithErr :: (HasElement a, MonadWebTest m)
   -> a                    -- ^ What to look for (selector or element)
   -> (Element -> m Bool)  -- ^ A predicate to verify if the search was successfil
   -> m Element
-awaitElementWithErr err root a f = -- withFrozenCallStack $
+awaitElementWithErr err root a f =
   do
     elems <- getElements a root f
     case elems of
